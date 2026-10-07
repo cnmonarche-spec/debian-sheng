@@ -119,6 +119,37 @@ provisioned for touch use:
 - **On-screen keyboard.** Plasma 6.7 ships its own OSK, so `forky` installs
   `plasma-keyboard`. Debian 14 has **removed `maliit-keyboard`**, which is still
   the only OSK Debian 13 has — the workflow picks the right one automatically.
+- **Enabling the OSK.** Installing the keyboard is not enough: KWin *is* the input
+  method compositor and launches the keyboard itself, and its `InputMethod` setting
+  is empty by default — which means no on-screen keyboard ever appears. The workflow
+  finds the keyboard's `.desktop` file (the one carrying
+  `X-KDE-Wayland-VirtualKeyboard=true`) and writes it to `~/.config/kwinrc` and
+  `/etc/skel/.config/kwinrc`:
+
+  ```ini
+  [Wayland]
+  InputMethod=/usr/share/applications/org.kde.plasma.keyboard.desktop
+  VirtualKeyboardMode=1
+  ```
+
+  `VirtualKeyboardMode` is `0` never / `1` touch and stylus (the default) / `2` also
+  for mouse. You can change all of this later in *System Settings → Keyboard →
+  Virtual Keyboard*.
+- **Rotation and scaling work out of the box.** KWin derives the scale from the
+  panel's physical size and picks **200%** for this 3048×2032 12.4" screen, and its
+  automatic-rotation policy already defaults to "rotate in tablet mode". Since the
+  Pad has a touchscreen and no pointer, KWin considers itself in tablet mode, so
+  rotation via the accelerometer (`iio-sensor-proxy`) is active without extra
+  configuration. To change it:
+
+  ```bash
+  kscreen-doctor -o                                           # list outputs
+  kscreen-doctor output.DSI-1.scale.2                         # 200%
+  kscreen-doctor output.DSI-1.autoRotatePolicy.always         # never|inTabletMode|always
+  ```
+
+  Note that pre-seeding `~/.config/kwinoutputconfig.json` is not done on purpose:
+  an entry that does not match the output's EDID is silently discarded by KWin.
 - **Login screen OSK.** SDDM runs its own Qt session and cannot use the Plasma OSK, so
   `qt6-virtualkeyboard-plugin` is installed and `InputMethod=qtvirtualkeyboard` is
   written to `/etc/sddm.conf.d/10-tablet.conf` (see `sddm.conf(5)`). Without this,
