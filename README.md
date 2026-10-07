@@ -223,6 +223,17 @@ Three further details the workflow handles, all easy to get wrong:
   `-DENABLE_XDGAUTOSTART=OFF` so none is shipped, but a stray one would start
   fcitx5 without KWin's input-method socket and break the text-input path.
 
+#### Pinyin is only enabled automatically on a Chinese locale
+
+fcitx5 ships per-locale defaults in `data/default/<locale>`. `zh_CN` lists
+`pinyin` (and `rime`), `zh_TW` lists `chewing`, while `en_US` and `C` list no
+input method beyond the plain keyboard. So:
+
+- **Choose `System language = zh_CN.UTF-8` and Pinyin works with no further
+  setup.** Without a Chinese locale the workflow emits a build warning.
+- With any other locale, add Pinyin by hand after the first boot:
+  `fcitx5-configtool` → *Input Method* → add **Pinyin**.
+
 #### Why fcitx5 rather than the Plasma keyboard, for Chinese
 
 Debian's Qt Virtual Keyboard is a `+dfsg` repack that ships no Pinyin plugin

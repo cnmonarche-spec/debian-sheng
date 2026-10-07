@@ -1333,6 +1333,15 @@ jobs:
             # breaks the text-input path.
             sudo rm -f "$ROOTFS_MOUNT/etc/xdg/autostart/org.fcitx.Fcitx5.desktop"
             echo "  fcitx5: XMODIFIERS set, im-config disabled, autostart cleared"
+
+            # fcitx5 ships per-locale defaults in data/default/<locale>: zh_CN
+            # lists pinyin (and rime), zh_TW lists chewing, while en_US and C
+            # list no input method beyond the plain keyboard.  So Pinyin is only
+            # active out of the box on a Chinese system locale.
+            case "${{ inputs.language }}" in
+              zh_*) : ;;
+              *) echo "::warning::fcitx5 is installed, but System language is '${{ inputs.language }}', so Pinyin is not enabled by default. Rebuild with System language = zh_CN.UTF-8, or add Pinyin in fcitx5-configtool after the first boot." ;;
+            esac
           fi
           echo "✓ Plasma tablet configuration written"
 
