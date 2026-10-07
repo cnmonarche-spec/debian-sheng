@@ -82,7 +82,9 @@ When you trigger the **Build RootFS** workflow via `workflow_dispatch`, the foll
 ## KDE Plasma versions (trixie vs forky)
 
 The KDE Plasma version you get depends on the **Debian Version** you pick, because
-the packages come straight from the selected Debian suite:
+the packages come straight from the selected Debian suite. **The default is
+`forky`**, so a plain "Run workflow" builds Plasma 6.7 — select `trixie` if you
+would rather have the older, more stable Plasma 6.3.6:
 
 | Debian Version | Suite | KDE Plasma | KDE Frameworks | Qt |
 |----------------|-------|------------|----------------|-----|
@@ -117,9 +119,11 @@ If you want the most stable device, stay on **`trixie`** and accept Plasma 6.3.6
 Because the Pad 6S Pro has no built-in keyboard, the `KDE Plasma` desktop is
 provisioned for touch use:
 
-- **On-screen keyboard.** Plasma 6.7 ships its own OSK, so `forky` installs
-  `plasma-keyboard`. Debian 14 has **removed `maliit-keyboard`**, which is still
-  the only OSK Debian 13 has — the workflow picks the right one automatically.
+- **On-screen keyboard.** The original workflow installed no on-screen keyboard at
+  all, so a keyboard-less tablet had nothing to type with. `Chinese input = none`
+  now installs `plasma-keyboard` on `forky` (Plasma 6.7's own OSK) or
+  `maliit-keyboard` on `trixie`, the only one Debian 13 has — Debian 14 removed
+  `maliit-keyboard`.
 - **Enabling the OSK.** Installing the keyboard is not enough: KWin *is* the input
   method compositor and launches the keyboard itself, and its `InputMethod` setting
   is empty by default — which means no on-screen keyboard ever appears. The workflow

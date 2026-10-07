@@ -13,7 +13,7 @@ on:
         options:
           - trixie
           - forky
-        default: 'trixie'
+        default: 'forky'
 
       desktop:
         description: 'Desktop Environment (server = no DE)'
@@ -66,7 +66,7 @@ on:
           - 'fr_FR.UTF-8'
           - 'es_ES.UTF-8'
           - 'ru_RU.UTF-8'
-        default: 'None (C.UTF-8)'
+        default: 'zh_CN.UTF-8'
 
       boot_mode:
         description: |
