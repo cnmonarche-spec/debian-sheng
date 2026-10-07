@@ -88,9 +88,28 @@ the packages come straight from the selected Debian suite:
 | Debian 13 | `trixie` (stable) | **6.3.6** | 6.13 | 6.8 |
 | Debian 14 | `forky` (testing) | **6.7.4** | 6.30 | 6.11 |
 
-> To build the newest Plasma **6.7**, choose **Debian Version = `forky`**. `forky`
-> is Debian *testing*, so package versions move — a build that works today can
-> break later when Debian uploads something new.
+> To build Plasma **6.7**, choose **Debian Version = `forky`**, because the desktop
+> packages are taken straight from the suite you select. There is no supported way
+> to get Plasma 6.7 on top of `trixie`: `trixie-backports` carries no Plasma, KDE
+> publishes no apt repository for Debian, and Plasma 6.7 cannot be backported
+> anyway since it needs Qt 6.11 while trixie has Qt 6.8.
+
+Things to know before you pick `forky`:
+
+- **Upstream Plasma 6.7.5 is the newest stable release**; Debian's forky archive
+  currently ships **6.7.4**. A slightly older point release is normal for a distro.
+- **Plasma 6.8 is expected around 2026-10-14 and drops the X11 session entirely**
+  (Wayland only, with XWayland still available for apps). Once it migrates into
+  forky, the "Plasma (X11)" entry disappears from the login screen.
+- **There is no Plasma 7.** KDE's published schedule covers 6.7 through 6.9.
+- **`forky` is Debian testing**, so it gets no timely security updates and package
+  versions move between builds — a build that works today can break later. Debian's
+  own `plasma-version` package makes a half-upgraded Plasma set fail loudly rather
+  than silently mixing versions.
+- For a reproducible image, pin the archive to a dated snapshot, e.g.
+  `deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20261007T000000Z/ forky main contrib non-free-firmware`.
+
+If you want the most stable device, stay on **`trixie`** and accept Plasma 6.3.6.
 
 ### Touch/tablet adaptation
 

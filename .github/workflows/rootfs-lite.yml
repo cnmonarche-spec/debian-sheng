@@ -962,6 +962,16 @@ jobs:
             http://deb.debian.org/debian/
           echo "✓ Debootstrap complete"
 
+          # debootstrap installs its own policy-rc.d while it runs and then
+          # deletes it again, so every apt-get below would try to start
+          # services.  There is no init or D-Bus in this chroot, so those
+          # attempts only produce failures.  Re-install policy-rc.d so that
+          # invoke-rc.d/service are no-ops for the rest of the build.
+          printf '#!/bin/sh\nexit 101\n' | \
+            sudo tee "$ROOTFS_MOUNT/usr/sbin/policy-rc.d" > /dev/null
+          sudo chmod 755 "$ROOTFS_MOUNT/usr/sbin/policy-rc.d"
+          echo "✓ policy-rc.d installed (services stay stopped inside the chroot)"
+
       - name: "Mount Virtual File Systems"
         run: |
           sudo mount --bind /dev "$ROOTFS_MOUNT/dev"
@@ -1268,6 +1278,9 @@ jobs:
         run: |
           sudo chroot "$ROOTFS_MOUNT" apt-get clean
           sudo rm -f "$ROOTFS_MOUNT/etc/resolv.conf"
+          # Drop the build-time policy-rc.d again so the flashed system can
+          # start services normally.
+          sudo rm -f "$ROOTFS_MOUNT/usr/sbin/policy-rc.d"
           echo "✓ APT cache cleaned"
 
       - name: "Unmount Virtual File Systems"
