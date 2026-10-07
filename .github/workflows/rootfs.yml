@@ -1251,7 +1251,11 @@ jobs:
           TabletMode=auto
           EOF
           done
-          sudo chown -R "${{ inputs.username }}" \
+          # chown runs on the runner, where the account exists only inside the
+          # image, so resolve the numeric IDs from inside the chroot first.
+          USER_UID=$(sudo chroot "$ROOTFS_MOUNT" id -u "${{ inputs.username }}")
+          USER_GID=$(sudo chroot "$ROOTFS_MOUNT" id -g "${{ inputs.username }}")
+          sudo chown -R "$USER_UID:$USER_GID" \
             "$ROOTFS_MOUNT/home/${{ inputs.username }}/.config"
           echo "✓ Plasma tablet configuration written"
 
