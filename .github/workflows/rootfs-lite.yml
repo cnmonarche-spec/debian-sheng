@@ -1168,9 +1168,15 @@ jobs:
             # installed at all: it could never connect while fcitx5 holds the
             # socket, and fcitx5 does not draw a keyboard of its own (its
             # virtualkeyboard addon is only a DBus trigger for Kylin/UKUI).
+            # fcitx5-pinyin-gui + fcitx5-chinese-addons-bin + libime-bin give the
+            # dictionary import path: scel2org5 turns a Sogou .scel dictionary
+            # into text, and libime_pinyindict compiles that to a .dict the
+            # Pinyin engine auto-loads.  Sogou's own input method has no arm64
+            # Linux build, so importing its word lists is the closest we get.
             IME_PACKAGES="fcitx5 fcitx5-chinese-addons fcitx5-pinyin \
               fcitx5-module-cloudpinyin fcitx5-module-pinyinhelper \
-              fcitx5-config-qt fcitx5-frontend-qt6 \
+              fcitx5-config-qt fcitx5-pinyin-gui fcitx5-chinese-addons-bin \
+              libime-bin fcitx5-frontend-qt6 \
               fcitx5-frontend-gtk3 fcitx5-frontend-gtk4 fcitx5-material-color"
             # Cloud pinyin is the closest Debian gets to Sogou's cloud
             # candidates.  The Wikipedia-derived dictionary only exists in
@@ -1298,22 +1304,35 @@ jobs:
             "$ROOTFS_MOUNT/home/${{ inputs.username }}/.config"
 
           if [[ "${{ inputs.chinese_ime }}" == "fcitx5" ]]; then
-            # XWayland/X11 applications find fcitx through XMODIFIERS.  We
-            # deliberately do NOT set QT_IM_MODULE / GTK_IM_MODULE: upstream
-            # documents that on KDE Wayland they must stay unset (setting them
-            # globally makes the candidate window blink), and they would also
-            # override the SDDM greeter's own QT_IM_MODULE=qtvirtualkeyboard.
-            if ! grep -qs '^XMODIFIERS=' "$ROOTFS_MOUNT/etc/environment"; then
-              echo 'XMODIFIERS=@im=fcitx' | \
-                sudo tee -a "$ROOTFS_MOUNT/etc/environment" > /dev/null
-            fi
+            # XWayland/X11 applications find fcitx through XMODIFIERS.  This goes
+            # in /etc/environment.d/ (systemd's environment.d), which is the
+            # placement Debian's own im-config maintainer recommends for a Plasma
+            # Wayland session; fcitx5's documentation does not recommend
+            # /etc/environment.  Syntax is NAME=value -- no `export`, no quotes.
+            #
+            # QT_IM_MODULE / GTK_IM_MODULE / SDL_IM_MODULE are deliberately NOT
+            # set: upstream documents that on KDE Wayland they must stay unset
+            # (setting them globally makes the candidate window blink), and they
+            # would also override the greeter's QT_IM_MODULE=qtvirtualkeyboard.
+            sudo mkdir -p "$ROOTFS_MOUNT/etc/environment.d"
+            printf 'XMODIFIERS=@im=fcitx\n' | \
+              sudo tee "$ROOTFS_MOUNT/etc/environment.d/10-fcitx.conf" > /dev/null
 
-            # fcitx5 also installs an XDG autostart entry.  If that is what
-            # starts it, the running instance never receives the input-method
-            # socket from KWin and the text-input path breaks, so KWin has to be
-            # the only launcher.
+            # fcitx5 only Recommends im-config, so apt pulls it in, and im-config
+            # exports GTK_IM_MODULE/QT_IM_MODULE by default.  Debian's maintainer
+            # notes im-config is unnecessary on Wayland desktops and that those
+            # variables must not be set here, so switch it off.
+            sudo mkdir -p "$ROOTFS_MOUNT/etc/default"
+            printf 'IM_CONFIG_DEFAULT_MODE=none\n' | \
+              sudo tee "$ROOTFS_MOUNT/etc/default/im-config" > /dev/null
+
+            # Debian builds fcitx5 with -DENABLE_XDGAUTOSTART=OFF, so it ships no
+            # autostart entry.  Clear one anyway: im-config or a manual copy can
+            # add it, and if anything other than KWin starts fcitx5, that
+            # instance never receives the input-method socket from KWin, which
+            # breaks the text-input path.
             sudo rm -f "$ROOTFS_MOUNT/etc/xdg/autostart/org.fcitx.Fcitx5.desktop"
-            echo "  fcitx5: XMODIFIERS set, XDG autostart removed (KWin launches it)"
+            echo "  fcitx5: XMODIFIERS set, im-config disabled, autostart cleared"
           fi
           echo "✓ Plasma tablet configuration written"
 

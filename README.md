@@ -206,16 +206,61 @@ dictionary, Debian 14 and later only).
 > needs the keyboard cover to type. Select `Chinese input = none` to get the touch
 > keyboard back without Chinese input.
 
-Two further details the workflow handles, both easy to get wrong:
+Three further details the workflow handles, all easy to get wrong:
 
-- `XMODIFIERS=@im=fcitx` is written to `/etc/environment` so XWayland/X11 apps can
-  reach fcitx. `QT_IM_MODULE` / `GTK_IM_MODULE` are deliberately **not** set:
-  upstream documents that on KDE Wayland they must stay unset (setting them
+- `XMODIFIERS=@im=fcitx` is written to `/etc/environment.d/10-fcitx.conf` so
+  XWayland/X11 applications can reach fcitx. That location — systemd's
+  `environment.d` — is what Debian's own im-config maintainer recommends for a
+  Plasma Wayland session; `/etc/environment` is not.
+- `QT_IM_MODULE` / `GTK_IM_MODULE` / `SDL_IM_MODULE` are deliberately **not** set.
+  Upstream documents that on KDE Wayland they must stay unset (setting them
   globally makes the candidate window blink), and they would also override the
   greeter's own `QT_IM_MODULE=qtvirtualkeyboard`.
-- fcitx5 ships an XDG autostart entry, which is removed. If autostart starts it,
-  fcitx5 never receives the input-method socket from KWin, which breaks the
-  text-input path — KWin has to be the only launcher.
+- `IM_CONFIG_DEFAULT_MODE=none` is written to `/etc/default/im-config`. `fcitx5`
+  only *Recommends* `im-config`, so apt pulls it in, and im-config exports
+  `GTK_IM_MODULE`/`QT_IM_MODULE` by default — precisely what must not happen here.
+  fcitx5's autostart entry is cleared as well: Debian builds fcitx5 with
+  `-DENABLE_XDGAUTOSTART=OFF` so none is shipped, but a stray one would start
+  fcitx5 without KWin's input-method socket and break the text-input path.
+
+#### Why fcitx5 rather than the Plasma keyboard, for Chinese
+
+Debian's Qt Virtual Keyboard is a `+dfsg` repack that ships no Pinyin plugin
+(only Hangul, Hunspell and Thai), while plasma-keyboard's `zh_CN` layout imports
+`PinyinInputMethod`. On Debian, the Plasma keyboard's "Simplified Chinese" layout
+is therefore effectively a US layout with CJK punctuation — it cannot compose
+Chinese at all. fcitx5 is not a preference here, it is the only working option.
+
+#### Importing Sogou's word lists
+
+Sogou's *input method* cannot be shipped, but its *dictionaries* can be imported,
+and that is where most of the typing quality comes from. `Chinese input = fcitx5`
+installs the complete pipeline:
+
+```bash
+scel2org5 sougou.scel -o mysogou.txt          # fcitx5-chinese-addons-bin
+libime_pinyindict mysogou.txt mysogou.dict    # libime-bin
+mkdir -p ~/.local/share/fcitx5/pinyin/dictionaries
+mv mysogou.dict ~/.local/share/fcitx5/pinyin/dictionaries/
+```
+
+Any `.dict` in that directory is loaded automatically. There is a GUI route too:
+*System Settings → Regional Settings → Input Method → Pinyin → Dictionary →
+Import*, or `fcitx5-configtool` → Pinyin → Dictionary (from `fcitx5-pinyin-gui`).
+
+#### Getting the on-screen keyboard back
+
+[`fortime/fcitx5-osk`](https://github.com/fortime/fcitx5-osk) is the only known way
+to have both: an on-screen keyboard that *drives* fcitx5 over D-Bus rather than
+competing for KWin's single input-method slot, with landscape and portrait
+layouts, plus a KWin launcher that surfaces it in tablet mode. KDE developers are
+evaluating it for exactly this purpose in the
+["We care about your Input" goal](https://invent.kde.org/teams/goals/we-care-about-your-input/-/work_items/21).
+
+It is **not packaged in Debian** (Rust; source/AUR only), its author has tested it
+only on KWin 6 Wayland/X11 on x86_64, and uppercase input needs a small root
+helper (`fcitx5-osk-key-helper`). It is therefore not installed here — add it by
+hand if you need Chinese *and* touch typing.
 
 ---
 
