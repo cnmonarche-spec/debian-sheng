@@ -13,7 +13,7 @@ on:
         options:
           - trixie
           - forky
-        default: 'trixie'
+        default: 'forky'
 
       desktop:
         description: 'Desktop Environment (server = no DE)'
@@ -28,6 +28,14 @@ on:
         description: 'Enable Plasma Mobile instead of Plasma Desktop'
         type: boolean
         default: false
+
+      chinese_ime:
+        description: 'Chinese input method (fcitx5 takes over KWin''s input-method slot)'
+        type: choice
+        options:
+          - none
+          - fcitx5
+        default: 'fcitx5'
 
       autologin:
         description: 'Autologin'
@@ -58,7 +66,7 @@ on:
           - 'fr_FR.UTF-8'
           - 'es_ES.UTF-8'
           - 'ru_RU.UTF-8'
-        default: 'None (C.UTF-8)'
+        default: 'zh_CN.UTF-8'
 
       boot_mode:
         description: |
@@ -962,6 +970,16 @@ jobs:
             http://deb.debian.org/debian/
           echo "✓ Debootstrap complete"
 
+          # debootstrap installs its own policy-rc.d while it runs and then
+          # deletes it again, so every apt-get below would try to start
+          # services.  There is no init or D-Bus in this chroot, so those
+          # attempts only produce failures.  Re-install policy-rc.d so that
+          # invoke-rc.d/service are no-ops for the rest of the build.
+          printf '#!/bin/sh\nexit 101\n' | \
+            sudo tee "$ROOTFS_MOUNT/usr/sbin/policy-rc.d" > /dev/null
+          sudo chmod 755 "$ROOTFS_MOUNT/usr/sbin/policy-rc.d"
+          echo "✓ policy-rc.d installed (services stay stopped inside the chroot)"
+
       - name: "Mount Virtual File Systems"
         run: |
           sudo mount --bind /dev "$ROOTFS_MOUNT/dev"
@@ -1131,17 +1149,69 @@ jobs:
         if: ${{ inputs.desktop == 'KDE Plasma' }}
         run: |
           sudo chroot "$ROOTFS_MOUNT" apt-get update
+
+          SUITE="${{ inputs.distro_suite }}"
           if [[ "${{ inputs.plasma_mobile }}" == "true" ]]; then
             PLASMA_PACKAGE="plasma-mobile"
           else
             PLASMA_PACKAGE="plasma-desktop"
           fi
+
+          # KWin has exactly ONE input-method slot, and both the on-screen
+          # keyboard and fcitx5 want it -- both ship a .desktop carrying
+          # X-KDE-Wayland-VirtualKeyboard=true.  Installing both would leave the
+          # winner up to glob order, so pick one explicitly here.
+          OSK_PACKAGE=""
+          IME_PACKAGES=""
+          if [[ "${{ inputs.chinese_ime }}" == "fcitx5" ]]; then
+            # fcitx5 takes the slot, so the KDE on-screen keyboard is not
+            # installed at all: it could never connect while fcitx5 holds the
+            # socket, and fcitx5 does not draw a keyboard of its own (its
+            # virtualkeyboard addon is only a DBus trigger for Kylin/UKUI).
+            # fcitx5-pinyin-gui + fcitx5-chinese-addons-bin + libime-bin give the
+            # dictionary import path: scel2org5 turns a Sogou .scel dictionary
+            # into text, and libime_pinyindict compiles that to a .dict the
+            # Pinyin engine auto-loads.  Sogou's own input method has no arm64
+            # Linux build, so importing its word lists is the closest we get.
+            IME_PACKAGES="fcitx5 fcitx5-chinese-addons fcitx5-pinyin \
+              fcitx5-module-cloudpinyin fcitx5-module-pinyinhelper \
+              fcitx5-config-qt fcitx5-pinyin-gui fcitx5-chinese-addons-bin \
+              libime-bin fcitx5-frontend-qt6 \
+              fcitx5-frontend-gtk3 fcitx5-frontend-gtk4 fcitx5-material-color"
+            # Cloud pinyin is the closest Debian gets to Sogou's cloud
+            # candidates.  The Wikipedia-derived dictionary only exists in
+            # Debian 14 and later.
+            if [[ "$SUITE" == "forky" ]]; then
+              IME_PACKAGES="$IME_PACKAGES fcitx5-pinyin-zhwiki"
+            fi
+            echo "  Chinese input: fcitx5 (takes KWin's input-method slot)"
+          else
+            # Plasma 6.7 ships its own OSK, and Debian 14 has removed
+            # maliit-keyboard, which is still the only OSK on trixie.
+            if [[ "$SUITE" == "forky" ]]; then
+              OSK_PACKAGE="plasma-keyboard"
+            else
+              OSK_PACKAGE="maliit-keyboard"
+            fi
+            echo "  on-screen keyboard: $OSK_PACKAGE (no Chinese input method)"
+          fi
+
+          # Qt Virtual Keyboard is needed on its own for the SDDM greeter,
+          # which runs its own Qt session and cannot use the session OSK.
           sudo chroot "$ROOTFS_MOUNT" apt-get install -y \
-            "$PLASMA_PACKAGE" plasma-workspace plasma-nm \
-            sddm konsole firefox-esr \
+            "$PLASMA_PACKAGE" plasma-workspace kwin-wayland plasma-nm \
+            sddm sddm-theme-breeze konsole firefox-esr \
             dolphin kate \
-            pipewire-alsa
-          echo "✓ KDE Plasma installed"
+            systemsettings kinfocenter kscreen plasma-systemmonitor \
+            kde-config-sddm kde-config-screenlocker \
+            polkit-kde-agent-1 xdg-desktop-portal xdg-desktop-portal-kde \
+            $OSK_PACKAGE $IME_PACKAGES qt6-virtualkeyboard-plugin \
+            qml6-module-qtquick-virtualkeyboard \
+            powerdevil upower power-profiles-daemon \
+            pipewire pipewire-pulse wireplumber pipewire-alsa plasma-pa \
+            bluedevil \
+            fonts-noto-cjk fonts-noto-color-emoji
+          echo "✓ KDE Plasma installed (suite=$SUITE, desktop=$PLASMA_PACKAGE, OSK=${OSK_PACKAGE:-none}, IME=${{ inputs.chinese_ime }})"
 
       - name: "Install KDE Plasma Plymouth Settings"
         if: ${{ inputs.desktop == 'KDE Plasma' && steps.partition.outputs.quiet_boot_enabled == 'true' }}
@@ -1150,6 +1220,130 @@ jobs:
           sudo chroot "$ROOTFS_MOUNT" apt-get install -y \
             kde-config-plymouth plymouth-theme-breeze
           echo "✓ KDE Plasma Plymouth settings installed"
+
+      - name: "Configure SDDM for Tablet"
+        if: ${{ inputs.desktop == 'KDE Plasma' }}
+        run: |
+          # The Xiaomi Pad 6S Pro has no physical keyboard, so the SDDM greeter
+          # needs Qt Virtual Keyboard to let the user type a password.
+          # "InputMethod=qtvirtualkeyboard" is documented in sddm.conf(5) as the
+          # setting for exactly this case.  It only affects the greeter; the
+          # Plasma session itself is configured separately.
+          sudo mkdir -p "$ROOTFS_MOUNT/etc/sddm.conf.d"
+          sudo tee "$ROOTFS_MOUNT/etc/sddm.conf.d/10-tablet.conf" << 'EOF'
+          [General]
+          InputMethod=qtvirtualkeyboard
+          EOF
+          echo "✓ SDDM on-screen keyboard configured"
+
+      - name: "Configure Plasma for Tablet"
+        if: ${{ inputs.desktop == 'KDE Plasma' }}
+        run: |
+          # KWin starts the input method itself, and its "InputMethod" setting is
+          # empty by default.  Whatever goes here owns KWin's single
+          # input-method slot, so the choice has to be explicit: both
+          # plasma-keyboard and fcitx5 ship a .desktop carrying
+          # X-KDE-Wayland-VirtualKeyboard=true, and a glob would pick the
+          # alphabetically first one and silently disable the keyboard.
+          INPUT_METHOD=""
+          if [[ "${{ inputs.chinese_ime }}" == "fcitx5" ]]; then
+            # Documented way to run fcitx5 on KDE Wayland: let KWin launch it,
+            # because that is what hands it the input-method socket it needs for
+            # the text-input protocol.  "Fcitx 5" is org.fcitx.Fcitx5.desktop;
+            # fcitx5-wayland-launcher is marked experimental upstream.
+            INPUT_METHOD="/usr/share/applications/org.fcitx.Fcitx5.desktop"
+            if [ ! -f "$ROOTFS_MOUNT$INPUT_METHOD" ]; then
+              echo "::warning::$INPUT_METHOD not found; fcitx5 will not start"
+              INPUT_METHOD=""
+            fi
+          else
+            for candidate in "$ROOTFS_MOUNT"/usr/share/applications/*.desktop; do
+              # Skip fcitx5 entries: they claim the same KWin slot but cannot
+              # draw a keyboard.
+              case "$candidate" in *fcitx*) continue ;; esac
+              if grep -qs 'X-KDE-Wayland-VirtualKeyboard=true' "$candidate"; then
+                INPUT_METHOD="${candidate#"$ROOTFS_MOUNT"}"
+                break
+              fi
+            done
+          fi
+          if [ -z "$INPUT_METHOD" ]; then
+            echo "::warning::no input method found; neither keyboard nor IME will start"
+          else
+            echo "  KWin InputMethod: $INPUT_METHOD"
+          fi
+
+          # VirtualKeyboardMode 1 shows the keyboard for touch/stylus input
+          # (0 = never, 2 = also for mouse).  TabletMode is KWin's default, but
+          # writing it makes the intent explicit.
+          #
+          # Deliberately NOT set here:
+          #   * HiDPI scale - KWin picks it from the panel's physical size and
+          #     lands on 200% for this 3048x2032 12.4" screen.
+          #   * autoRotation - KWin defaults it to InTabletMode, and this device
+          #     has a touchscreen with no pointer, so tablet mode is already on.
+          # Pre-seeding kwinoutputconfig.json for either is fragile: a hand
+          # written entry that does not match the output's EDID is discarded.
+          for HOME_DIR in "$ROOTFS_MOUNT/etc/skel" \
+                          "$ROOTFS_MOUNT/home/${{ inputs.username }}"; do
+            sudo mkdir -p "$HOME_DIR/.config"
+            sudo tee "$HOME_DIR/.config/kwinrc" > /dev/null << EOF
+          [Wayland]
+          InputMethod=$INPUT_METHOD
+          VirtualKeyboardMode=1
+
+          [Input]
+          TabletMode=auto
+          EOF
+          done
+          # chown runs on the runner, where the account exists only inside the
+          # image, so resolve the numeric IDs from inside the chroot first.
+          USER_UID=$(sudo chroot "$ROOTFS_MOUNT" id -u "${{ inputs.username }}")
+          USER_GID=$(sudo chroot "$ROOTFS_MOUNT" id -g "${{ inputs.username }}")
+          sudo chown -R "$USER_UID:$USER_GID" \
+            "$ROOTFS_MOUNT/home/${{ inputs.username }}/.config"
+
+          if [[ "${{ inputs.chinese_ime }}" == "fcitx5" ]]; then
+            # XWayland/X11 applications find fcitx through XMODIFIERS.  This goes
+            # in /etc/environment.d/ (systemd's environment.d), which is the
+            # placement Debian's own im-config maintainer recommends for a Plasma
+            # Wayland session; fcitx5's documentation does not recommend
+            # /etc/environment.  Syntax is NAME=value -- no `export`, no quotes.
+            #
+            # QT_IM_MODULE / GTK_IM_MODULE / SDL_IM_MODULE are deliberately NOT
+            # set: upstream documents that on KDE Wayland they must stay unset
+            # (setting them globally makes the candidate window blink), and they
+            # would also override the greeter's QT_IM_MODULE=qtvirtualkeyboard.
+            sudo mkdir -p "$ROOTFS_MOUNT/etc/environment.d"
+            printf 'XMODIFIERS=@im=fcitx\n' | \
+              sudo tee "$ROOTFS_MOUNT/etc/environment.d/10-fcitx.conf" > /dev/null
+
+            # fcitx5 only Recommends im-config, so apt pulls it in, and im-config
+            # exports GTK_IM_MODULE/QT_IM_MODULE by default.  Debian's maintainer
+            # notes im-config is unnecessary on Wayland desktops and that those
+            # variables must not be set here, so switch it off.
+            sudo mkdir -p "$ROOTFS_MOUNT/etc/default"
+            printf 'IM_CONFIG_DEFAULT_MODE=none\n' | \
+              sudo tee "$ROOTFS_MOUNT/etc/default/im-config" > /dev/null
+
+            # Debian builds fcitx5 with -DENABLE_XDGAUTOSTART=OFF, so it ships no
+            # autostart entry.  Clear one anyway: im-config or a manual copy can
+            # add it, and if anything other than KWin starts fcitx5, that
+            # instance never receives the input-method socket from KWin, which
+            # breaks the text-input path.
+            sudo rm -f "$ROOTFS_MOUNT/etc/xdg/autostart/org.fcitx.Fcitx5.desktop"
+            echo "  fcitx5: XMODIFIERS set, im-config disabled, autostart cleared"
+
+            # fcitx5 ships per-locale defaults in data/default/<locale>: zh_CN
+            # lists pinyin (and rime), zh_TW lists chewing, while en_US and C
+            # list no input method beyond the plain keyboard.  So Pinyin is only
+            # active out of the box on a Chinese system locale.
+            case "${{ inputs.language }}" in
+              zh_*) : ;;
+              *) echo "::warning::fcitx5 is installed, but System language is '${{ inputs.language }}', so Pinyin is not enabled by default. Rebuild with System language = zh_CN.UTF-8, or add Pinyin in fcitx5-configtool after the first boot." ;;
+            esac
+          fi
+          echo "✓ Plasma tablet configuration written"
 
       - name: "Configure GDM"
         if: ${{ inputs.desktop == 'GNOME' && (!inputs.autologin) }}
@@ -1231,6 +1425,9 @@ jobs:
         run: |
           sudo chroot "$ROOTFS_MOUNT" apt-get clean
           sudo rm -f "$ROOTFS_MOUNT/etc/resolv.conf"
+          # Drop the build-time policy-rc.d again so the flashed system can
+          # start services normally.
+          sudo rm -f "$ROOTFS_MOUNT/usr/sbin/policy-rc.d"
           echo "✓ APT cache cleaned"
 
       - name: "Unmount Virtual File Systems"
