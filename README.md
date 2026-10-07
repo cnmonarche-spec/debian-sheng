@@ -57,6 +57,7 @@ When you trigger the **Build RootFS** workflow via `workflow_dispatch`, the foll
 | **Debian Version** | Debian version to install (Trixie = Debian 13, Forky = Debian 14) | `trixie` / `forky` | `trixie` |
 | **Desktop Environment** | Preinstalled desktop environment. Select `server` for a headless (no GUI) system. | `GNOME` / `KDE Plasma` / `server` | `KDE Plasma` |
 | **Plasma Mobile** | Install `plasma-mobile` instead of `plasma-desktop` when Desktop Environment is `KDE Plasma`. | `true` / `false` | `false` |
+| **Chinese input** | Chinese input method. `fcitx5` takes over KWin's single input-method slot (see [Chinese input](#chinese-input)); `none` leaves the KDE on-screen keyboard enabled instead. | `none` / `fcitx5` | `fcitx5` |
 | **Autologin** | Whether the created user should be logged in automatically. | `true` / `false` | `true` |
 | **Username** | Username for the non-root user. | string | `username` |
 | **Hostname** | System hostname. | string | `xiaomi-sheng` |
@@ -167,6 +168,54 @@ provisioned for touch use:
 Autologin (`Autologin` = `true`) logs straight into the `plasma` session without
 going through the greeter. Turn it off if you want a real login screen — the OSK
 above will then let you type your password on screen.
+
+### Chinese input
+
+**Sogou cannot be shipped here.** Sogou publishes no official arm64 Linux build,
+and Debian has no `sogou` package in either suite. The package that looks like an
+arm64 Sogou build in third-party stores is
+`com.sogou.sogoupinyin-deepin-sogouhw_1.0.0_all.deb`, and its control file reads:
+
+```
+Architecture: all
+Depends: com.sogou.sogoupinyin-deepin, deepin-elf-verify (>= 1.1.1-1)
+```
+
+It is the Deepin edition's *handwriting data pack* — not an input method — and it
+requires Deepin's own Sogou package plus Deepin infrastructure, so it is not
+usable on this image.
+
+The native replacement is **fcitx5**, which is what `Chinese input = fcitx5`
+installs, including `fcitx5-module-cloudpinyin` (cloud candidates — the closest
+Debian gets to Sogou's) and `fcitx5-pinyin-zhwiki` (a Wikipedia-derived
+dictionary, Debian 14 and later only).
+
+> **KWin has exactly one input-method slot, and fcitx5 and the on-screen keyboard
+> both want it.** Both ship a `.desktop` carrying
+> `X-KDE-Wayland-VirtualKeyboard=true`, so installing both would leave the winner
+> up to glob order. `Chinese input = fcitx5` therefore installs fcitx5 *instead
+> of* `plasma-keyboard` and points KWin at it:
+>
+> ```ini
+> [Wayland]
+> InputMethod=/usr/share/applications/org.fcitx.Fcitx5.desktop
+> ```
+>
+> fcitx5 does **not** draw an on-screen keyboard of its own (its `virtualkeyboard`
+> addon is only a DBus trigger for Kylin/UKUI), so with this setting the tablet
+> needs the keyboard cover to type. Select `Chinese input = none` to get the touch
+> keyboard back without Chinese input.
+
+Two further details the workflow handles, both easy to get wrong:
+
+- `XMODIFIERS=@im=fcitx` is written to `/etc/environment` so XWayland/X11 apps can
+  reach fcitx. `QT_IM_MODULE` / `GTK_IM_MODULE` are deliberately **not** set:
+  upstream documents that on KDE Wayland they must stay unset (setting them
+  globally makes the candidate window blink), and they would also override the
+  greeter's own `QT_IM_MODULE=qtvirtualkeyboard`.
+- fcitx5 ships an XDG autostart entry, which is removed. If autostart starts it,
+  fcitx5 never receives the input-method socket from KWin, which breaks the
+  text-input path — KWin has to be the only launcher.
 
 ---
 
