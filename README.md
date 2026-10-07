@@ -78,7 +78,48 @@ When you trigger the **Build RootFS** workflow via `workflow_dispatch`, the foll
 > - If you choose **Kernel source = `custom_build`**, you **must** provide the **Kernel Repo URL**, **Kernel Branch**, and **Kernel Config** fields.  
 ---
 
-## About Some Packages...
+## KDE Plasma versions (trixie vs forky)
+
+The KDE Plasma version you get depends on the **Debian Version** you pick, because
+the packages come straight from the selected Debian suite:
+
+| Debian Version | Suite | KDE Plasma | KDE Frameworks | Qt |
+|----------------|-------|------------|----------------|-----|
+| Debian 13 | `trixie` (stable) | **6.3.6** | 6.13 | 6.8 |
+| Debian 14 | `forky` (testing) | **6.7.4** | 6.30 | 6.11 |
+
+> To build the newest Plasma **6.7**, choose **Debian Version = `forky`**. `forky`
+> is Debian *testing*, so package versions move — a build that works today can
+> break later when Debian uploads something new.
+
+### Touch/tablet adaptation
+
+Because the Pad 6S Pro has no built-in keyboard, the `KDE Plasma` desktop is
+provisioned for touch use:
+
+- **On-screen keyboard.** Plasma 6.7 ships its own OSK, so `forky` installs
+  `plasma-keyboard`. Debian 14 has **removed `maliit-keyboard`**, which is still
+  the only OSK Debian 13 has — the workflow picks the right one automatically.
+- **Login screen OSK.** SDDM runs its own Qt session and cannot use the Plasma OSK, so
+  `qt6-virtualkeyboard-plugin` is installed and `InputMethod=qtvirtualkeyboard` is
+  written to `/etc/sddm.conf.d/10-tablet.conf` (see `sddm.conf(5)`). Without this,
+  you cannot type a password on a keyboard-less device when autologin is off.
+- **Audio.** The PipeWire stack (`pipewire`, `pipewire-pulse`, `wireplumber`,
+  `pipewire-alsa`) plus `plasma-pa` is installed; `plasma-desktop` alone does not
+  pull in a sound server.
+- **Power/battery.** `powerdevil`, `upower` and `power-profiles-daemon` are installed.
+- **CJK text.** `fonts-noto-cjk` and `fonts-noto-color-emoji` are installed so
+  Chinese/Japanese/Korean text and emoji render out of the box.
+- **Wayland session.** `plasma-workspace` depends on `kwin-wayland` and `qt6-wayland`,
+  and `xwayland` comes with it, so the default session is Wayland with X11 app support.
+  Touch input and per-output scaling are handled by KWin itself.
+
+Autologin (`Autologin` = `true`) logs straight into the `plasma` session without
+going through the greeter. Turn it off if you want a real login screen — the OSK
+above will then let you type your password on screen.
+
+---
+
 
 | Package | Description |
 |---------|-------------|

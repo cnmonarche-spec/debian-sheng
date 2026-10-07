@@ -1131,17 +1131,39 @@ jobs:
         if: ${{ inputs.desktop == 'KDE Plasma' }}
         run: |
           sudo chroot "$ROOTFS_MOUNT" apt-get update
+
+          SUITE="${{ inputs.distro_suite }}"
           if [[ "${{ inputs.plasma_mobile }}" == "true" ]]; then
             PLASMA_PACKAGE="plasma-mobile"
           else
             PLASMA_PACKAGE="plasma-desktop"
           fi
+
+          # On-screen keyboard. Plasma 6.7 ships its own OSK (`plasma-keyboard`),
+          # and Debian 14 (forky) has removed `maliit-keyboard`, which is still
+          # the only OSK available on trixie. Pick whichever the suite provides.
+          if [[ "$SUITE" == "forky" ]]; then
+            OSK_PACKAGE="plasma-keyboard"
+          else
+            OSK_PACKAGE="maliit-keyboard"
+          fi
+
+          # Qt Virtual Keyboard is needed on its own for the SDDM greeter,
+          # which runs its own Qt session and cannot use the Plasma OSK.
           sudo chroot "$ROOTFS_MOUNT" apt-get install -y \
-            "$PLASMA_PACKAGE" plasma-workspace plasma-nm \
-            sddm konsole firefox-esr \
+            "$PLASMA_PACKAGE" plasma-workspace kwin-wayland plasma-nm \
+            sddm sddm-theme-breeze konsole firefox-esr \
             dolphin kate \
-            pipewire-alsa
-          echo "✓ KDE Plasma installed"
+            systemsettings kinfocenter kscreen plasma-systemmonitor \
+            kde-config-sddm kde-config-screenlocker \
+            polkit-kde-agent-1 xdg-desktop-portal xdg-desktop-portal-kde \
+            "$OSK_PACKAGE" qt6-virtualkeyboard-plugin \
+            qml6-module-qtquick-virtualkeyboard \
+            powerdevil upower power-profiles-daemon \
+            pipewire pipewire-pulse wireplumber pipewire-alsa plasma-pa \
+            bluedevil \
+            fonts-noto-cjk fonts-noto-color-emoji
+          echo "✓ KDE Plasma installed (suite=$SUITE, desktop=$PLASMA_PACKAGE, OSK=$OSK_PACKAGE)"
 
       - name: "Install KDE Plasma Plymouth Settings"
         if: ${{ inputs.desktop == 'KDE Plasma' && steps.partition.outputs.quiet_boot_enabled == 'true' }}
@@ -1150,6 +1172,21 @@ jobs:
           sudo chroot "$ROOTFS_MOUNT" apt-get install -y \
             kde-config-plymouth plymouth-theme-breeze
           echo "✓ KDE Plasma Plymouth settings installed"
+
+      - name: "Configure SDDM for Tablet"
+        if: ${{ inputs.desktop == 'KDE Plasma' }}
+        run: |
+          # The Xiaomi Pad 6S Pro has no physical keyboard, so the SDDM greeter
+          # needs Qt Virtual Keyboard to let the user type a password.
+          # "InputMethod=qtvirtualkeyboard" is documented in sddm.conf(5) as the
+          # setting for exactly this case.  It only affects the greeter; the
+          # Plasma session itself is configured separately.
+          sudo mkdir -p "$ROOTFS_MOUNT/etc/sddm.conf.d"
+          sudo tee "$ROOTFS_MOUNT/etc/sddm.conf.d/10-tablet.conf" << 'EOF'
+          [General]
+          InputMethod=qtvirtualkeyboard
+          EOF
+          echo "✓ SDDM on-screen keyboard configured"
 
       - name: "Configure GDM"
         if: ${{ inputs.desktop == 'GNOME' && (!inputs.autologin) }}
