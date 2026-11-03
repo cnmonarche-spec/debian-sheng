@@ -57,6 +57,7 @@ When you trigger the **Build RootFS** workflow via `workflow_dispatch`, the foll
 | **Debian Version** | Debian version to install (Trixie = Debian 13, Forky = Debian 14) | `trixie` / `forky` | `trixie` |
 | **Desktop Environment** | Preinstalled desktop environment. Select `server` for a headless (no GUI) system. | `GNOME` / `KDE Plasma` / `server` | `KDE Plasma` |
 | **Plasma Mobile** | Install `plasma-mobile` instead of `plasma-desktop` when Desktop Environment is `KDE Plasma`. | `true` / `false` | `false` |
+| **Chinese input** | Chinese input method. `fcitx5` takes over KWin's single input-method slot (see [Chinese input](#chinese-input)); `none` leaves the KDE on-screen keyboard enabled instead. | `none` / `fcitx5` | `fcitx5` |
 | **Autologin** | Whether the created user should be logged in automatically. | `true` / `false` | `true` |
 | **Username** | Username for the non-root user. | string | `username` |
 | **Hostname** | System hostname. | string | `xiaomi-sheng` |
@@ -78,7 +79,206 @@ When you trigger the **Build RootFS** workflow via `workflow_dispatch`, the foll
 > - If you choose **Kernel source = `custom_build`**, you **must** provide the **Kernel Repo URL**, **Kernel Branch**, and **Kernel Config** fields.  
 ---
 
-## About Some Packages...
+## KDE Plasma versions (trixie vs forky)
+
+The KDE Plasma version you get depends on the **Debian Version** you pick, because
+the packages come straight from the selected Debian suite. **The default is
+`forky`**, so a plain "Run workflow" builds Plasma 6.7 — select `trixie` if you
+would rather have the older, more stable Plasma 6.3.6:
+
+| Debian Version | Suite | KDE Plasma | KDE Frameworks | Qt |
+|----------------|-------|------------|----------------|-----|
+| Debian 13 | `trixie` (stable) | **6.3.6** | 6.13 | 6.8 |
+| Debian 14 | `forky` (testing) | **6.7.4** | 6.30 | 6.11 |
+
+> To build Plasma **6.7**, choose **Debian Version = `forky`**, because the desktop
+> packages are taken straight from the suite you select. There is no supported way
+> to get Plasma 6.7 on top of `trixie`: `trixie-backports` carries no Plasma, KDE
+> publishes no apt repository for Debian, and Plasma 6.7 cannot be backported
+> anyway since it needs Qt 6.11 while trixie has Qt 6.8.
+
+Things to know before you pick `forky`:
+
+- **Upstream Plasma 6.7.5 is the newest stable release**; Debian's forky archive
+  currently ships **6.7.4**. A slightly older point release is normal for a distro.
+- **Plasma 6.8 is expected around 2026-10-14 and drops the X11 session entirely**
+  (Wayland only, with XWayland still available for apps). Once it migrates into
+  forky, the "Plasma (X11)" entry disappears from the login screen.
+- **There is no Plasma 7.** KDE's published schedule covers 6.7 through 6.9.
+- **`forky` is Debian testing**, so it gets no timely security updates and package
+  versions move between builds — a build that works today can break later. Debian's
+  own `plasma-version` package makes a half-upgraded Plasma set fail loudly rather
+  than silently mixing versions.
+- For a reproducible image, pin the archive to a dated snapshot, e.g.
+  `deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20261007T000000Z/ forky main contrib non-free-firmware`.
+
+If you want the most stable device, stay on **`trixie`** and accept Plasma 6.3.6.
+
+### Touch/tablet adaptation
+
+Because the Pad 6S Pro has no built-in keyboard, the `KDE Plasma` desktop is
+provisioned for touch use:
+
+- **On-screen keyboard.** The original workflow installed no on-screen keyboard at
+  all, so a keyboard-less tablet had nothing to type with. `Chinese input = none`
+  now installs `plasma-keyboard` on `forky` (Plasma 6.7's own OSK) or
+  `maliit-keyboard` on `trixie`, the only one Debian 13 has — Debian 14 removed
+  `maliit-keyboard`.
+- **Enabling the OSK.** Installing the keyboard is not enough: KWin *is* the input
+  method compositor and launches the keyboard itself, and its `InputMethod` setting
+  is empty by default — which means no on-screen keyboard ever appears. The workflow
+  finds the keyboard's `.desktop` file (the one carrying
+  `X-KDE-Wayland-VirtualKeyboard=true`) and writes it to `~/.config/kwinrc` and
+  `/etc/skel/.config/kwinrc`:
+
+  ```ini
+  [Wayland]
+  InputMethod=/usr/share/applications/org.kde.plasma.keyboard.desktop
+  VirtualKeyboardMode=1
+  ```
+
+  `VirtualKeyboardMode` is `0` never / `1` touch and stylus (the default) / `2` also
+  for mouse. You can change all of this later in *System Settings → Keyboard →
+  Virtual Keyboard*.
+- **Rotation and scaling work out of the box.** KWin derives the scale from the
+  panel's physical size and picks **200%** for this 3048×2032 12.4" screen, and its
+  automatic-rotation policy already defaults to "rotate in tablet mode". Since the
+  Pad has a touchscreen and no pointer, KWin considers itself in tablet mode, so
+  rotation via the accelerometer (`iio-sensor-proxy`) is active without extra
+  configuration. To change it:
+
+  ```bash
+  kscreen-doctor -o                                           # list outputs
+  kscreen-doctor output.DSI-1.scale.2                         # 200%
+  kscreen-doctor output.DSI-1.autoRotatePolicy.always         # never|inTabletMode|always
+  ```
+
+  Note that pre-seeding `~/.config/kwinoutputconfig.json` is not done on purpose:
+  an entry that does not match the output's EDID is silently discarded by KWin.
+- **Login screen OSK.** SDDM runs its own Qt session and cannot use the Plasma OSK, so
+  `qt6-virtualkeyboard-plugin` is installed and `InputMethod=qtvirtualkeyboard` is
+  written to `/etc/sddm.conf.d/10-tablet.conf` (see `sddm.conf(5)`). Without this,
+  you cannot type a password on a keyboard-less device when autologin is off.
+- **Audio.** The PipeWire stack (`pipewire`, `pipewire-pulse`, `wireplumber`,
+  `pipewire-alsa`) plus `plasma-pa` is installed; `plasma-desktop` alone does not
+  pull in a sound server.
+- **Power/battery.** `powerdevil`, `upower` and `power-profiles-daemon` are installed.
+- **CJK text.** `fonts-noto-cjk` and `fonts-noto-color-emoji` are installed so
+  Chinese/Japanese/Korean text and emoji render out of the box.
+- **Wayland session.** `plasma-workspace` depends on `kwin-wayland` and `qt6-wayland`,
+  and `xwayland` comes with it, so the default session is Wayland with X11 app support.
+  Touch input and per-output scaling are handled by KWin itself.
+
+Autologin (`Autologin` = `true`) logs straight into the `plasma` session without
+going through the greeter. Turn it off if you want a real login screen — the OSK
+above will then let you type your password on screen.
+
+### Chinese input
+
+**Sogou cannot be shipped here.** Sogou publishes no official arm64 Linux build,
+and Debian has no `sogou` package in either suite. The package that looks like an
+arm64 Sogou build in third-party stores is
+`com.sogou.sogoupinyin-deepin-sogouhw_1.0.0_all.deb`, and its control file reads:
+
+```
+Architecture: all
+Depends: com.sogou.sogoupinyin-deepin, deepin-elf-verify (>= 1.1.1-1)
+```
+
+It is the Deepin edition's *handwriting data pack* — not an input method — and it
+requires Deepin's own Sogou package plus Deepin infrastructure, so it is not
+usable on this image.
+
+The native replacement is **fcitx5**, which is what `Chinese input = fcitx5`
+installs, including `fcitx5-module-cloudpinyin` (cloud candidates — the closest
+Debian gets to Sogou's) and `fcitx5-pinyin-zhwiki` (a Wikipedia-derived
+dictionary, Debian 14 and later only).
+
+> **KWin has exactly one input-method slot, and fcitx5 and the on-screen keyboard
+> both want it.** Both ship a `.desktop` carrying
+> `X-KDE-Wayland-VirtualKeyboard=true`, so installing both would leave the winner
+> up to glob order. `Chinese input = fcitx5` therefore installs fcitx5 *instead
+> of* `plasma-keyboard` and points KWin at it:
+>
+> ```ini
+> [Wayland]
+> InputMethod=/usr/share/applications/org.fcitx.Fcitx5.desktop
+> ```
+>
+> fcitx5 does **not** draw an on-screen keyboard of its own (its `virtualkeyboard`
+> addon is only a DBus trigger for Kylin/UKUI), so with this setting the tablet
+> needs the keyboard cover to type. Select `Chinese input = none` to get the touch
+> keyboard back without Chinese input.
+
+Three further details the workflow handles, all easy to get wrong:
+
+- `XMODIFIERS=@im=fcitx` is written to `/etc/environment.d/10-fcitx.conf` so
+  XWayland/X11 applications can reach fcitx. That location — systemd's
+  `environment.d` — is what Debian's own im-config maintainer recommends for a
+  Plasma Wayland session; `/etc/environment` is not.
+- `QT_IM_MODULE` / `GTK_IM_MODULE` / `SDL_IM_MODULE` are deliberately **not** set.
+  Upstream documents that on KDE Wayland they must stay unset (setting them
+  globally makes the candidate window blink), and they would also override the
+  greeter's own `QT_IM_MODULE=qtvirtualkeyboard`.
+- `IM_CONFIG_DEFAULT_MODE=none` is written to `/etc/default/im-config`. `fcitx5`
+  only *Recommends* `im-config`, so apt pulls it in, and im-config exports
+  `GTK_IM_MODULE`/`QT_IM_MODULE` by default — precisely what must not happen here.
+  fcitx5's autostart entry is cleared as well: Debian builds fcitx5 with
+  `-DENABLE_XDGAUTOSTART=OFF` so none is shipped, but a stray one would start
+  fcitx5 without KWin's input-method socket and break the text-input path.
+
+#### Pinyin is only enabled automatically on a Chinese locale
+
+fcitx5 ships per-locale defaults in `data/default/<locale>`. `zh_CN` lists
+`pinyin` (and `rime`), `zh_TW` lists `chewing`, while `en_US` and `C` list no
+input method beyond the plain keyboard. So:
+
+- **Choose `System language = zh_CN.UTF-8` and Pinyin works with no further
+  setup.** Without a Chinese locale the workflow emits a build warning.
+- With any other locale, add Pinyin by hand after the first boot:
+  `fcitx5-configtool` → *Input Method* → add **Pinyin**.
+
+#### Why fcitx5 rather than the Plasma keyboard, for Chinese
+
+Debian's Qt Virtual Keyboard is a `+dfsg` repack that ships no Pinyin plugin
+(only Hangul, Hunspell and Thai), while plasma-keyboard's `zh_CN` layout imports
+`PinyinInputMethod`. On Debian, the Plasma keyboard's "Simplified Chinese" layout
+is therefore effectively a US layout with CJK punctuation — it cannot compose
+Chinese at all. fcitx5 is not a preference here, it is the only working option.
+
+#### Importing Sogou's word lists
+
+Sogou's *input method* cannot be shipped, but its *dictionaries* can be imported,
+and that is where most of the typing quality comes from. `Chinese input = fcitx5`
+installs the complete pipeline:
+
+```bash
+scel2org5 sougou.scel -o mysogou.txt          # fcitx5-chinese-addons-bin
+libime_pinyindict mysogou.txt mysogou.dict    # libime-bin
+mkdir -p ~/.local/share/fcitx5/pinyin/dictionaries
+mv mysogou.dict ~/.local/share/fcitx5/pinyin/dictionaries/
+```
+
+Any `.dict` in that directory is loaded automatically. There is a GUI route too:
+*System Settings → Regional Settings → Input Method → Pinyin → Dictionary →
+Import*, or `fcitx5-configtool` → Pinyin → Dictionary (from `fcitx5-pinyin-gui`).
+
+#### Getting the on-screen keyboard back
+
+[`fortime/fcitx5-osk`](https://github.com/fortime/fcitx5-osk) is the only known way
+to have both: an on-screen keyboard that *drives* fcitx5 over D-Bus rather than
+competing for KWin's single input-method slot, with landscape and portrait
+layouts, plus a KWin launcher that surfaces it in tablet mode. KDE developers are
+evaluating it for exactly this purpose in the
+["We care about your Input" goal](https://invent.kde.org/teams/goals/we-care-about-your-input/-/work_items/21).
+
+It is **not packaged in Debian** (Rust; source/AUR only), its author has tested it
+only on KWin 6 Wayland/X11 on x86_64, and uppercase input needs a small root
+helper (`fcitx5-osk-key-helper`). It is therefore not installed here — add it by
+hand if you need Chinese *and* touch typing.
+
+---
+
 
 | Package | Description |
 |---------|-------------|
